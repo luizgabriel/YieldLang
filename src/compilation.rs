@@ -37,23 +37,29 @@ impl<'a> LLVMCodeGen<'a> {
             .map_err(|e| e.to_string())
     }
 
-    fn generate(&self, expr: Expr) -> Result<BasicValueEnum<'a>, CompileError> {
+    fn generate(&self, expr: Expr) -> Result<AnyValueEnum<'a>, CompileError> {
         match expr {
+            Expr::Boolean(value) => {
+                let bool_type = self.context.bool_type();
+                Ok(AnyValueEnum::IntValue(
+                    bool_type.const_int(value as u64, false),
+                ))
+            }
             Expr::Integer(value) => {
                 let i32_type = self.context.i32_type();
-                Ok(BasicValueEnum::IntValue(
+                Ok(AnyValueEnum::IntValue(
                     i32_type.const_int(value as u64, false),
                 ))
             }
             Expr::String(value) => {
                 let string_ptr = self.builder.build_global_string_ptr(&value, "")?;
-                Ok(BasicValueEnum::PointerValue(string_ptr.as_pointer_value()))
+                Ok(AnyValueEnum::PointerValue(string_ptr.as_pointer_value()))
             }
             _ => unimplemented!(),
         }
     }
 
-    fn define_libc_functions(&self) {
+    pub fn define_external_functions(&self) {
         let i8_type = self.context.i8_type();
         let i32_type = self.context.i32_type();
 
@@ -67,8 +73,6 @@ impl<'a> LLVMCodeGen<'a> {
     }
 
     pub fn compile(&self, expr: Expr) -> Result<(), CompileError> {
-        self.define_libc_functions();
-
         let i32_type = self.context.i32_type();
         let main_fn_type = i32_type.fn_type(&[], false);
         let main_fn_value = self.module.add_function("main", main_fn_type, None);
@@ -79,11 +83,11 @@ impl<'a> LLVMCodeGen<'a> {
         let value = self.generate(expr)?;
 
         match value {
-            BasicValueEnum::IntValue(value) => {
+            AnyValueEnum::IntValue(value) => {
                 self.builder.build_return(Some(&value))?;
             }
 
-            BasicValueEnum::PointerValue(value) => {
+            AnyValueEnum::PointerValue(value) => {
                 let puts_fn = self.module.get_function("puts").unwrap();
                 self.builder.build_call(puts_fn, &[value.into()], "")?;
                 self.builder

@@ -21,9 +21,11 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let binding = inkwell::context::Context::create();
     let compiler = LLVMCodeGen::new(&binding, module_name);
+    compiler.define_external_functions();
 
     let input = std::fs::read_to_string(cli.input.clone()).context("Failed to read input file")?;
     let ast = parse(&input).context("Failed to parse program")?;
+
     compiler.compile(ast).context("Failed to compile program")?;
 
     compiler

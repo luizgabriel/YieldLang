@@ -21,6 +21,10 @@ use crate::ast::Expr;
 
 type ParseResult<'a, R> = IResult<&'a str, R, VerboseError<&'a str>>;
 
+fn boolean<'a>(input: &'a str) -> ParseResult<'a, bool> {
+    alt((value(true, tag("true")), value(false, tag("false"))))(input)
+}
+
 fn integer<'a, O>(input: &'a str) -> ParseResult<'a, O>
 where
     O: FromStr,
@@ -146,5 +150,21 @@ mod tests {
     fn test_integer() {
         assert_parse!(integer::<u32>("123"), 123);
         assert_parse_err!(integer::<u32>("abc"));
+    }
+
+    #[test]
+    fn test_boolean() {
+        assert_parse!(boolean("true"), true);
+        assert_parse!(boolean("false"), false);
+        assert_parse_err!(boolean("abc"));
+    }
+
+    #[test]
+    fn test_identifier() {
+        assert_parse!(identifier("abc"), "abc");
+        assert_parse!(identifier("abc123"), "abc123");
+        assert_parse!(identifier("abc_123"), "abc_123");
+        assert_parse!(identifier("_abc_123"), "_abc_123");
+        assert_parse_err!(identifier("123abc"));
     }
 }

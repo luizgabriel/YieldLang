@@ -34,10 +34,6 @@ To build and run examples in YieldLang, follow these steps:
 
 Feel free to explore the `examples` directory for more example files.
 
-## Contributing
-
-If you're interested in contributing to YieldLang, please refer to the [CONTRIBUTING.md](CONTRIBUTING.md) file for guidelines.
-
 ## License
 
 YieldLang is licensed under the [Apache License 2.0](LICENSE).

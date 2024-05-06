@@ -2,18 +2,17 @@ use std::fmt::Debug;
 use std::str::FromStr;
 
 use nom::branch::alt;
-use nom::bytes::streaming::{is_not, take_while_m_n};
-use nom::character::streaming::{char, multispace1};
+use nom::bytes::complete::{is_not, take_while_m_n};
+use nom::character::complete::{char, line_ending, multispace1, space0, space1};
 use nom::combinator::{map, map_opt, map_res, value, verify};
-use nom::multi::{fold_many0, many1};
-use nom::sequence::{delimited, preceded, tuple};
+use nom::error::{context, VerboseError};
+use nom::multi::{fold_many0, many1, separated_list1};
+use nom::sequence::{delimited, preceded, separated_pair};
 use nom::IResult;
 use nom::{
     bytes::complete::tag,
     character::complete::{alphanumeric1, digit1},
     combinator::{eof, not, recognize},
-    error::VerboseError,
-    multi::many0_count,
     sequence::{pair, terminated},
 };
 
@@ -34,10 +33,7 @@ where
 }
 
 fn identifier<'a>(input: &'a str) -> ParseResult<'a, &'a str> {
-    recognize(pair(
-        not(digit1),
-        many0_count(alt((alphanumeric1, tag("_")))),
-    ))(input)
+    recognize(pair(not(digit1), many1(alt((alphanumeric1, tag("_"))))))(input)
 }
 
 fn string_unicode<'a>(input: &'a str) -> ParseResult<'a, char> {
@@ -102,31 +98,66 @@ fn string<'a>(input: &'a str) -> ParseResult<'a, String> {
 }
 
 fn expr_p0<'a>(input: &'a str) -> ParseResult<'a, Expr> {
-    alt((
-        map(integer, Expr::Identifier),
-        map(string, Expr::String),
-        map(identifier, |i| Expr::Identifier(i.to_owned())),
-    ))(input)
+    context(
+        "literals",
+        alt((
+            map(integer, Expr::Identifier),
+            map(string, Expr::String),
+            map(boolean, Expr::Boolean),
+            map(identifier, |i: &'a str| Expr::Identifier(i.to_owned())),
+        )),
+    )(input)
 }
 
 fn expr_p1<'a>(input: &'a str) -> ParseResult<'a, Expr> {
-    delimited(char('('), expr, char(')'))(input)
+    let paren_expr = delimited(char('('), expr, char(')'));
+    context("parenthesized expr", alt((paren_expr, expr_p0)))(input)
 }
 
 fn expr_p2<'a>(input: &'a str) -> ParseResult<'a, Expr> {
-    map(tuple((expr_p1, many1(expr_p1))), |(head, tail)| {
-        tail.into_iter().fold(head, |lhs, rhs| {
-            Expr::FunctionApplication(Box::new(lhs), Box::new(rhs))
-        })
-    })(input)
+    let fn_app = context(
+        "function application",
+        map(
+            separated_pair(expr_p1, space1, separated_list1(space1, expr_p1)),
+            |(head, tail)| {
+                tail.into_iter().fold(head, |lhs, rhs| {
+                    Expr::FunctionApplication(Box::new(lhs), Box::new(rhs))
+                })
+            },
+        ),
+    );
+
+    alt((fn_app, expr_p1))(input)
+}
+
+fn expr_p3<'a>(input: &'a str) -> ParseResult<'a, Expr> {
+    let assign_exp = context(
+        "assignment expr",
+        map(
+            separated_pair(identifier, delimited(space1, char('='), space1), expr_p2),
+            |(id, body): (&'a str, Expr)| Expr::AssignmentExpr(id.to_owned(), Box::new(body)),
+        ),
+    );
+
+    alt((assign_exp, expr_p2))(input)
 }
 
 fn expr<'a>(input: &'a str) -> ParseResult<'a, Expr> {
-    alt((expr_p2, expr_p1, expr_p0))(input)
+    context("expr", delimited(space0, expr_p3, space0))(input)
+}
+
+fn end_of_statement<'a>(input: &'a str) -> ParseResult<'a, ()> {
+    context("end of statement", value((), many1(line_ending)))(input)
 }
 
 pub fn program<'a>(input: &'a str) -> ParseResult<'a, Expr> {
-    terminated(expr, eof)(input)
+    context(
+        "program",
+        map(
+            terminated(separated_list1(end_of_statement, expr), eof),
+            Expr::Block,
+        ),
+    )(input)
 }
 
 #[cfg(test)]
@@ -165,6 +196,7 @@ mod tests {
         assert_parse!(identifier("abc123"), "abc123");
         assert_parse!(identifier("abc_123"), "abc_123");
         assert_parse!(identifier("_abc_123"), "_abc_123");
+        assert_parse_err!(identifier(""));
         assert_parse_err!(identifier("123abc"));
     }
 }

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use inkwell::{builder::BuilderError, module::Linkage, values::*, *};
+use inkwell::{builder::BuilderError, module::Linkage, types::AnyTypeEnum, values::*, *};
 use thiserror::Error;
 
 use crate::ast::Expr;
@@ -14,6 +14,15 @@ pub struct LLVMCodeGen<'a> {
 pub enum CompileError {
     #[error("BuilderError: {0}")]
     BuilderError(#[from] BuilderError),
+
+    #[error("ConversionError: {0}")]
+    ConversionError(String),
+
+    #[error("Function does not exist: {0}")]
+    FunctionDoesNotExist(String),
+
+    #[error("Empty block")]
+    EmptyBlock,
 
     #[error("Invalid main function")]
     InvalidMainFunction,
@@ -51,11 +60,62 @@ impl<'a> LLVMCodeGen<'a> {
                     i32_type.const_int(value as u64, false),
                 ))
             }
+
             Expr::String(value) => {
                 let string_ptr = self.builder.build_global_string_ptr(&value, "")?;
                 Ok(AnyValueEnum::PointerValue(string_ptr.as_pointer_value()))
             }
-            _ => unimplemented!(),
+
+            Expr::AssignmentExpr(id, value) => {
+                let value = self.generate(*value)?;
+                let ty = value.get_type();
+
+                let allocation = match ty {
+                    AnyTypeEnum::IntType(ty) => self.builder.build_alloca(ty, &id)?,
+                    AnyTypeEnum::PointerType(ty) => self.builder.build_alloca(ty, &id)?,
+                    _ => unimplemented!("Unimplemented type"),
+                };
+
+                let assign_instruction = match value {
+                    AnyValueEnum::IntValue(value) => self.builder.build_store(allocation, value)?,
+                    AnyValueEnum::PointerValue(value) => {
+                        self.builder.build_store(allocation, value)?
+                    }
+                    _ => unimplemented!("Unimplemented type for assignment"),
+                };
+
+                Ok(assign_instruction.into())
+            }
+
+            Expr::FunctionApplication(lhs, rhs) => {
+                let ident = match *lhs {
+                    Expr::Identifier(ref ident) => ident,
+                    _ => unimplemented!("FunctionApplication lhs must be an identifier"),
+                };
+
+                let function = self
+                    .module
+                    .get_function(ident)
+                    .ok_or_else(|| CompileError::FunctionDoesNotExist(ident.clone()))?;
+
+                let arg = self.generate(*rhs)?;
+
+                let result = self.builder.build_call(
+                    function,
+                    &[arg
+                        .try_into()
+                        .map_err(|_| CompileError::ConversionError(arg.get_type().to_string()))?],
+                    "",
+                )?;
+
+                Ok(result.as_any_value_enum())
+            }
+
+            Expr::Block(exprs) => exprs
+                .into_iter()
+                .fold(Err(CompileError::EmptyBlock), |_, expr| self.generate(expr)),
+
+            _ => unimplemented!("Unimplemented expression: {expr:?}"),
         }
     }
 
@@ -85,13 +145,6 @@ impl<'a> LLVMCodeGen<'a> {
         match value {
             AnyValueEnum::IntValue(value) => {
                 self.builder.build_return(Some(&value))?;
-            }
-
-            AnyValueEnum::PointerValue(value) => {
-                let puts_fn = self.module.get_function("puts").unwrap();
-                self.builder.build_call(puts_fn, &[value.into()], "")?;
-                self.builder
-                    .build_return(Some(&i32_type.const_int(0, false)))?;
             }
 
             _ => {

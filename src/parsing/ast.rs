@@ -4,5 +4,7 @@ pub enum Expr {
     Integer(u32),
     String(String),
     Identifier(String),
+    AssignmentExpr(String, Box<Expr>),
     FunctionApplication(Box<Expr>, Box<Expr>),
+    Block(Vec<Expr>),
 }

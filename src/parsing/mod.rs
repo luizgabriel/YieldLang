@@ -1,5 +1,6 @@
 use self::{ast::Expr, grammar::*};
-use nom::{error::convert_error, Finish};
+use nom::error::convert_error;
+use nom::Finish;
 
 pub mod ast;
 mod grammar;

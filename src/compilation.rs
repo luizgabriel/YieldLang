@@ -2,7 +2,7 @@
 use inkwell::{builder::BuilderError, module::Linkage, types::AnyTypeEnum, values::*, *};
 use thiserror::Error;
 
-use crate::ast::Expr;
+use crate::ast::{Expr, LiteralValue};
 
 pub struct LLVMCodeGen<'a> {
     context: &'a context::Context,
@@ -15,17 +15,30 @@ pub enum CompileError {
     #[error("BuilderError: {0}")]
     BuilderError(#[from] BuilderError),
 
-    #[error("ConversionError: {0}")]
-    ConversionError(String),
+    #[error("BasicValueRequired: {0}")]
+    BasicValueRequired(String),
 
     #[error("Function does not exist: {0}")]
-    FunctionDoesNotExist(String),
+    UndefinedFunction(String),
+
+    #[error("Literal values are not callable")]
+    NotAFunction(),
 
     #[error("Empty block")]
     EmptyBlock,
 
     #[error("Invalid main function")]
     InvalidMainFunction,
+}
+
+fn generate_bool<'a>(context: &'a context::Context, value: bool) -> AnyValueEnum<'a> {
+    let bool_type = context.bool_type();
+    AnyValueEnum::IntValue(bool_type.const_int(value.into(), false))
+}
+
+fn generate_i32<'a>(context: &'a context::Context, value: i32) -> AnyValueEnum<'a> {
+    let i32_type = context.i32_type();
+    AnyValueEnum::IntValue(i32_type.const_int(value as u64, false))
 }
 
 impl<'a> LLVMCodeGen<'a> {
@@ -48,23 +61,14 @@ impl<'a> LLVMCodeGen<'a> {
 
     fn generate(&self, expr: Expr) -> Result<AnyValueEnum<'a>, CompileError> {
         match expr {
-            Expr::Boolean(value) => {
-                let bool_type = self.context.bool_type();
-                Ok(AnyValueEnum::IntValue(
-                    bool_type.const_int(value as u64, false),
-                ))
-            }
-            Expr::Integer(value) => {
-                let i32_type = self.context.i32_type();
-                Ok(AnyValueEnum::IntValue(
-                    i32_type.const_int(value as u64, false),
-                ))
-            }
-
-            Expr::String(value) => {
-                let string_ptr = self.builder.build_global_string_ptr(&value, "")?;
-                Ok(AnyValueEnum::PointerValue(string_ptr.as_pointer_value()))
-            }
+            Expr::Literal(literal) => match literal {
+                LiteralValue::Boolean(value) => Ok(generate_bool(self.context, value)),
+                LiteralValue::Integer(value) => Ok(generate_i32(self.context, value)),
+                LiteralValue::String(value) => {
+                    let global_value = self.builder.build_global_string_ptr(&value, "")?;
+                    Ok(AnyValueEnum::PointerValue(global_value.as_pointer_value()))
+                }
+            },
 
             Expr::AssignmentExpr(id, value) => {
                 let value = self.generate(*value)?;
@@ -88,23 +92,24 @@ impl<'a> LLVMCodeGen<'a> {
             }
 
             Expr::FunctionApplication(lhs, rhs) => {
-                let ident = match *lhs {
-                    Expr::Identifier(ref ident) => ident,
+                let function = match *lhs {
+                    Expr::Identifier(ref ident) => self
+                        .module
+                        .get_function(ident)
+                        .ok_or_else(|| CompileError::UndefinedFunction(ident.clone()))?,
+
+                    Expr::Literal(_) => Err(CompileError::NotAFunction())?,
+
                     _ => unimplemented!("FunctionApplication lhs must be an identifier"),
                 };
-
-                let function = self
-                    .module
-                    .get_function(ident)
-                    .ok_or_else(|| CompileError::FunctionDoesNotExist(ident.clone()))?;
 
                 let arg = self.generate(*rhs)?;
 
                 let result = self.builder.build_call(
                     function,
-                    &[arg
-                        .try_into()
-                        .map_err(|_| CompileError::ConversionError(arg.get_type().to_string()))?],
+                    &[arg.try_into().map_err(|_| {
+                        CompileError::BasicValueRequired(arg.get_type().to_string())
+                    })?],
                     "",
                 )?;
 

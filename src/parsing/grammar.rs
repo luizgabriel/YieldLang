@@ -16,7 +16,7 @@ use nom::{
     sequence::{pair, terminated},
 };
 
-use crate::ast::Expr;
+use crate::ast::{Expr, LiteralValue};
 
 type ParseResult<'a, R> = IResult<&'a str, R, VerboseError<&'a str>>;
 
@@ -97,13 +97,19 @@ fn string<'a>(input: &'a str) -> ParseResult<'a, String> {
     delimited(char('"'), build_string, char('"'))(input)
 }
 
+fn literals<'a>(input: &'a str) -> ParseResult<'a, LiteralValue> {
+    alt((
+        map(integer, LiteralValue::Integer),
+        map(string, LiteralValue::String),
+        map(boolean, LiteralValue::Boolean),
+    ))(input)
+}
+
 fn expr_p0<'a>(input: &'a str) -> ParseResult<'a, Expr> {
     context(
-        "literals",
+        "terminals",
         alt((
-            map(integer, Expr::Identifier),
-            map(string, Expr::String),
-            map(boolean, Expr::Boolean),
+            map(literals, Expr::Literal),
             map(identifier, |i: &'a str| Expr::Identifier(i.to_owned())),
         )),
     )(input)
